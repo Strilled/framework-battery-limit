@@ -1,0 +1,8 @@
+# Laufzeit-Artefakte der Installation
+limit.txt
+fw-apply.log
+framework_tool.exe
+
+# Windows
+Thumbs.db
+desktop.ini
