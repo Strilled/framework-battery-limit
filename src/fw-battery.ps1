@@ -57,6 +57,28 @@ function Get-Status {
     }
 }
 
+# Live charge/discharge rate straight from ACPI via WMI. Cheaper than an EC
+# roundtrip and, unlike framework_tool, it also reports the discharge side.
+function Get-WmiBattery {
+    try {
+        $b = Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus -ErrorAction Stop |
+             Select-Object -First 1
+        if ($null -eq $b) { return $null }
+        # 0x7FFFFFFF means "unknown" in the ACPI battery spec
+        $chg = [int64]$b.ChargeRate;    if ($chg -lt 0 -or $chg -ge 0x7FFFFFFF) { $chg = 0 }
+        $dis = [int64]$b.DischargeRate; if ($dis -lt 0 -or $dis -ge 0x7FFFFFFF) { $dis = 0 }
+        [pscustomobject]@{
+            Charging    = [bool]$b.Charging
+            Discharging = [bool]$b.Discharging
+            AcOnline    = [bool]$b.PowerOnline
+            ChargeMw    = $chg                       # mW into the battery
+            DischargeMw = $dis                       # mW out of the battery
+            Mv          = [int64]$b.Voltage          # mV
+            RemainMwh   = [int64]$b.RemainingCapacity
+        }
+    } catch { $null }
+}
+
 # ---------- UI ----------
 $form = New-Object System.Windows.Forms.Form
 $form.Text            = 'Framework - Battery Charge Limit'
@@ -246,22 +268,36 @@ function Update-Ui {
     $acTxt = if ($s.Ac -eq 'connected') { 'AC connected' } else { 'On battery' }
     $lblDetail.Text  = "$acTxt - battery $($s.State)"
 
-    # Line 1: charge current / voltage / resulting power
-    if ($null -ne $s.Ma) {
-        $volt  = if ($null -ne $s.Mv) { '{0,6:N2} V' -f ($s.Mv / 1000.0) } else { '     - V' }
-        $watt  = if ($null -ne $s.Mv) { '{0,5:N1} W' -f (($s.Mv / 1000.0) * ($s.Ma / 1000.0)) } else { '    - W' }
-        $lblCharge.Text = 'Charge current {0,5} mA  @{1}  = {2}' -f $s.Ma, $volt, $watt
-        $lblCharge.ForeColor = if ($s.Ma -gt 0) {
-            [System.Drawing.Color]::FromArgb(40, 130, 60)
-        } else {
-            [System.Drawing.Color]::FromArgb(60, 60, 60)
-        }
+    # Line 1: power flow at the battery (charge or discharge)
+    $w = Get-WmiBattery
+    if ($null -ne $w -and $w.Discharging -and $w.DischargeMw -gt 0) {
+        # On battery the discharge rate IS the laptop's current power draw
+        $ma2  = if ($w.Mv -gt 0) { [int]($w.DischargeMw * 1000 / $w.Mv) } else { $null }
+        $det  = if ($null -ne $ma2) { ' ({0} mA @ {1:N2} V)' -f $ma2, ($w.Mv / 1000.0) } else { '' }
+        $lblCharge.Text = 'System draw {0,5:N1} W{1}' -f ($w.DischargeMw / 1000.0), $det
+        $lblCharge.ForeColor = [System.Drawing.Color]::FromArgb(190, 100, 30)
+    } elseif ($null -ne $s.Ma -and $s.Ma -gt 0) {
+        $volt = if ($null -ne $s.Mv) { '{0:N2} V' -f ($s.Mv / 1000.0) } else { '- V' }
+        $watt = if ($null -ne $s.Mv) { '{0,5:N1} W' -f (($s.Mv / 1000.0) * ($s.Ma / 1000.0)) } else { '  - W' }
+        $lblCharge.Text = 'Charging   {0} ({1} mA @ {2})' -f $watt, $s.Ma, $volt
+        $lblCharge.ForeColor = [System.Drawing.Color]::FromArgb(40, 130, 60)
+    } elseif ($null -ne $w -and $w.Charging -and $w.ChargeMw -gt 0) {
+        $lblCharge.Text = 'Charging   {0,5:N1} W' -f ($w.ChargeMw / 1000.0)
+        $lblCharge.ForeColor = [System.Drawing.Color]::FromArgb(40, 130, 60)
+    } elseif ($s.Ac -eq 'connected') {
+        $lblCharge.Text = 'AC powered - battery idle, draw covered by the charger'
+        $lblCharge.ForeColor = [System.Drawing.Color]::FromArgb(60, 60, 60)
     } else {
-        $lblCharge.Text = 'Charge current: not readable'
+        $lblCharge.Text = 'Power draw: not readable'
+        $lblCharge.ForeColor = [System.Drawing.Color]::FromArgb(60, 60, 60)
     }
 
-    # Line 2: charger input limit plus battery health
+    # Line 2: runtime estimate while discharging, charger input limit, battery health
     $parts = @()
+    if ($null -ne $w -and $w.Discharging -and $w.DischargeMw -gt 0 -and $w.RemainMwh -gt 0) {
+        $hrs = $w.RemainMwh / [double]$w.DischargeMw
+        $parts += ('~{0:N0}:{1:00} h left' -f [Math]::Floor($hrs), [Math]::Floor(($hrs - [Math]::Floor($hrs)) * 60))
+    }
     if ($null -ne $s.InMa) { $parts += ('Input limit {0} mA' -f $s.InMa) }
     if ($null -ne $s.Lfcc) { $parts += ('LFCC {0} mAh' -f $s.Lfcc) }
     $lblCharge2.Text = $parts -join '   '

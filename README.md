@@ -17,6 +17,7 @@ This project turns the second option into something you'd actually use day to da
 
 - current charge limit and battery level, as a bar with a limit marker (orange = above the limit, discharging toward it)
 - **charge current, charge voltage and the resulting wattage** — refreshed every 3 seconds, so you can watch the current ramp up and down live
+- **on battery: the live system power draw** (discharge rate in W, plus current and voltage) and an estimated runtime remaining
 - the charger's input current limit and LFCC (Last Full Charge Capacity — your battery health indicator over time)
 - slider from 50–100 % plus 60/80/100 presets
 - a checkbox to enable or disable the autostart task without opening Task Scheduler
