@@ -206,7 +206,7 @@ $form.Controls.Add($btnRefresh)
 $chkAuto = New-Object System.Windows.Forms.CheckBox
 $chkAuto.Location = New-Object System.Drawing.Point(18, 302)
 $chkAuto.Size     = New-Object System.Drawing.Size(356, 22)
-$chkAuto.Text     = 'Re-apply automatically at every logon'
+$chkAuto.Text     = 'Re-apply automatically (logon, unlock, resume)'
 $form.Controls.Add($chkAuto)
 
 $lblHint = New-Object System.Windows.Forms.Label
@@ -214,7 +214,7 @@ $lblHint.Location  = New-Object System.Drawing.Point(18, 328)
 $lblHint.Size      = New-Object System.Drawing.Size(356, 52)
 $lblHint.ForeColor = [System.Drawing.Color]::DimGray
 $lblHint.Font      = New-Object System.Drawing.Font('Segoe UI', 8)
-$lblHint.Text      = 'The EC keeps a ~5 % float range (80 = ~75-80 %). The applied value is remembered and - if checked above - re-applied after every logon.'
+$lblHint.Text      = 'The EC keeps a ~5 % float range (80 = ~75-80 %) and forgets the limit on every power cycle, including resume from sleep. The value is remembered and - if checked above - restored automatically.'
 $form.Controls.Add($lblHint)
 
 # ---- Autostart task ----
@@ -233,7 +233,7 @@ function Sync-AutoCheckbox {
     } else {
         $chkAuto.Enabled = $true
         $chkAuto.Checked = ($t.State -ne 'Disabled')
-        $chkAuto.Text    = 'Re-apply automatically at every logon'
+        $chkAuto.Text    = 'Re-apply automatically (logon, unlock, resume)'
     }
     $script:suppressChk = $false
 }

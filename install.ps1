@@ -9,7 +9,8 @@
 
     The two tasks:
       FrameworkBatteryLimit-GUI     on demand, RunLevel Highest -> GUI without a UAC dialog
-      FrameworkBatteryLimit-Apply   at every logon -> re-applies the remembered limit
+      FrameworkBatteryLimit-Apply   at logon, unlock, resume and periodically ->
+                                    re-applies the remembered limit
 
 .PARAMETER InstallDir
     Target directory. Default: "%ProgramFiles%\FrameworkBatteryLimit".
@@ -20,6 +21,10 @@
 
 .PARAMETER ToolVersion
     Release tag of FrameworkComputer/framework-system.
+
+.PARAMETER PollMinutes
+    Additionally re-check the limit every N minutes. 0 turns the poll off and
+    leaves only the logon/unlock/resume triggers. Default 30.
 
 .PARAMETER SkipDownload
     Do not download framework_tool.exe (e.g. if you supplied it yourself).
@@ -42,6 +47,8 @@ param(
     [ValidateRange(20, 100)]
     [int]    $Limit       = 80,
     [string] $ToolVersion = 'v0.6.5',
+    [ValidateRange(0, 720)]
+    [int]    $PollMinutes = 30,
     [switch] $SkipDownload
 )
 
@@ -102,13 +109,45 @@ $applySettings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden `
     -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
-$trigger.Delay = 'PT15S'
+# The EC forgets the limit whenever it loses power - that is a cold boot, but on
+# these machines also a resume from sleep. A logon trigger alone therefore only
+# covers the reboot case, and after the first suspend the limit silently falls
+# back to 100 %. Hence: logon, unlock, resume, plus a slow poll that catches
+# whatever the events miss (AC replug, hibernate, firmware quirks).
+$ns = 'Root/Microsoft/Windows/TaskScheduler'
+function New-TriggerInstance([string]$class) {
+    New-CimInstance -CimClass (Get-CimClass -ClassName $class -Namespace $ns) -ClientOnly
+}
+
+$trigLogon = New-ScheduledTaskTrigger -AtLogOn -User $me
+$trigLogon.Delay = 'PT15S'
+
+if ($PollMinutes -gt 0) {
+    $rep = New-TriggerInstance 'MSFT_TaskRepetitionPattern'
+    $rep.Interval          = 'PT{0}M' -f $PollMinutes   # no Duration = repeat forever
+    $rep.StopAtDurationEnd = $false
+    $trigLogon.Repetition  = $rep
+}
+
+# StateChange 8 = SessionUnlock
+$trigUnlock             = New-TriggerInstance 'MSFT_TaskSessionStateChangeTrigger'
+$trigUnlock.Enabled     = $true
+$trigUnlock.StateChange = 8
+$trigUnlock.UserId      = $me
+$trigUnlock.Delay       = 'PT10S'
+
+# Power-Troubleshooter 1 is written once a resume from sleep is complete.
+$trigResume         = New-TriggerInstance 'MSFT_TaskEventTrigger'
+$trigResume.Enabled = $true
+$trigResume.Delay   = 'PT10S'
+$trigResume.Subscription = @'
+<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select></Query></QueryList>
+'@
 
 Register-ScheduledTask -TaskName 'FrameworkBatteryLimit-Apply' `
     -Action (New-ScheduledTaskAction -Execute $wscript -Argument ('"{0}\fw-apply.vbs"' -f $InstallDir)) `
-    -Trigger $trigger -Principal $principal -Settings $applySettings `
-    -Description 'Re-applies the charge limit last chosen in the GUI after logon.' `
+    -Trigger @($trigLogon, $trigUnlock, $trigResume) -Principal $principal -Settings $applySettings `
+    -Description 'Re-applies the charge limit last chosen in the GUI after logon, unlock and resume.' `
     -Force | Out-Null
 
 Write-Host 'Scheduled tasks registered.'

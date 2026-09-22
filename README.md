@@ -11,7 +11,7 @@ Windows has no built-in charge limit setting; on every vendor it lives in firmwa
 - **BIOS** (`F2` → Advanced → Battery Charge Limit): permanent, but every change costs a reboot.
 - **[`framework_tool`](https://github.com/FrameworkComputer/framework-system)**: sets the value in the embedded controller at runtime — but it's a CLI, it needs admin rights, and the value does not survive a reboot.
 
-This project turns the second option into something you'd actually use day to day: a GUI with a slider, plus a scheduled task that restores your last setting after every logon. You get the convenience of the CLI *and* the persistence of the BIOS route.
+This project turns the second option into something you'd actually use day to day: a GUI with a slider, plus a scheduled task that restores your last setting after every logon, unlock and resume from sleep. You get the convenience of the CLI *and* the persistence of the BIOS route.
 
 ## What the GUI shows
 
@@ -59,7 +59,7 @@ Desktop shortcut
                        ├─ framework_tool.exe --charge-limit <n>
                        └─ writes <n> to limit.txt
 
-Logon (+15 s)
+Logon (+15 s) / unlock / resume from sleep / every 30 min
    └─ task FrameworkBatteryLimit-Apply (RunLevel Highest, hidden)
         └─ fw-apply.vbs → powershell fw-apply.ps1
              └─ reads limit.txt, applies it, logs to fw-apply.log
@@ -110,6 +110,7 @@ One deliberate trade-off remains: any local process can trigger the GUI task. Al
 
 - **5 % float range.** The EC maintains a range rather than a point value: `80` means roughly 75–80 % in practice. This is intentional, so the charger doesn't constantly top up at the threshold.
 - **The value lives in the EC, not in NVRAM.** Hence the apply task. Note that the BIOS writes its own setting into the EC at every POST, so there is a window of a minute or two after each cold boot during which the BIOS value applies, until the task kicks in 15 s after logon. If you want it truly nailed down, set the BIOS value as well — that also covers the case where Windows doesn't come up at all.
+- **The EC also forgets the limit on resume from sleep**, not just on a cold boot — on a machine that is suspended rather than shut down, a logon-only trigger would never fire and the limit would quietly sit at 100 % for days. The apply task therefore also runs on session unlock, on the resume event (`Microsoft-Windows-Power-Troubleshooter` ID 1) and every 30 minutes as a net for cases without either event, such as unplugging and replugging the charger. The periodic run costs one EC read and stays silent in the log unless it actually had to change something; `install.ps1 -PollMinutes 0` turns it off.
 - **`framework_tool.exe` strictly requires admin rights.** Without elevation Windows just reports "access denied" — the binary isn't broken, its manifest declares `requireAdministrator`.
 - **The battery is not actively discharged.** If it sits above the new limit it simply stays there and only drifts down once you run on battery.
 
